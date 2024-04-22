@@ -6,7 +6,7 @@ from sklearn.model_selection import LeaveOneOut
 from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
 from tqdm import tqdm, trange
 import os
-from feature_related import feature_selection as f_selection  # Import the feature_selection module
+from feature_related import feature_selection   # Import the feature_selection module
 from joblib import dump, load
 from sklearn.model_selection import GridSearchCV
 import pandas as pd
@@ -143,7 +143,7 @@ class Model_ML:
         self.label_test = self.label_ndarrays_CInonCI['test']
 
         # Feature selection - filter_based
-        f_selection = f_selection()
+        f_selection = feature_selection()
         fisher_scores = f_selection.fisher_score(self.data_train_valid, self.label_train_valid)
         self.fisher_idx = np.argsort(fisher_scores)[::-1] # sort in descending order
 
