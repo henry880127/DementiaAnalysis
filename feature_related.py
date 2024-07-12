@@ -1,5 +1,6 @@
 import numpy as np
 from scipy import stats
+import pandas as pd
 
 class feature_extraction:
     def __init__(self, sampling_rate=500):
@@ -76,3 +77,215 @@ class feature_selection:
             score[i] = stats.pearsonr(f, y)[0]
             score[i] = np.abs(score[i])
         return score
+    
+    def remove_collinear_features(self, x, threshold):
+        '''
+        ref: https://stackoverflow.com/questions/29294983/how-to-calculate-correlation-between-all-columns-and-remove-highly-correlated-on
+        Objective:
+            Remove collinear features in a dataframe with a correlation coefficient
+            greater than the threshold. Removing collinear features can help a model 
+            to generalize and improves the interpretability of the model.
+
+        Inputs: 
+            x: features dataframe
+            threshold: features with correlations greater than this value are removed
+
+        Output: 
+            dataframe that contains only the non-highly-collinear features
+        '''
+
+        x = pd.DataFrame(x)
+        # Calculate the correlation matrix
+        corr_matrix = x.corr()
+        iters = range(len(corr_matrix.columns) - 1)
+        drop_cols = []
+
+        # Iterate through the correlation matrix and compare correlations
+        for i in iters:
+            for j in range(i+1):
+                item = corr_matrix.iloc[j:(j+1), (i+1):(i+2)]
+                col = item.columns
+                row = item.index
+                val = abs(item.values)
+
+                # If correlation exceeds the threshold
+                if val >= threshold:
+                    # Print the correlated features and the correlation value
+                    print(col.values[0], "|", row.values[0], "|", round(val[0][0], 2))
+                    drop_cols.append(col.values[0])
+
+        # Drop one of each pair of correlated columns
+        drops = set(drop_cols)
+        x = x.drop(columns=drops)
+        
+        x = x.values
+        return x, drops
+    
+from sklearn.svm import SVC
+class RFECV_pseudo_sample():
+    def __init__(self, n_pseudo_samples, fitted_estimator, n_features_to_select=0,  c=1.4826):
+        self.n_features_to_select = n_features_to_select
+        self.fitted_estimator = fitted_estimator
+        self.params = fitted_estimator.get_params()
+        self.n_pseudo_samples = n_pseudo_samples
+        self.discarded_features_idx = list()
+        self.remain_feature_idx = list()
+        self.c = c
+
+    def create_pseudo_samples(self, X):
+        n_features = X.shape[1]
+        
+        # Create a list to store the pseudo samples
+        pseudo_samples = []
+        
+        # Calculate the quantiles of all features
+        quantiles = np.array([i/self.n_pseudo_samples for i in range(self.n_pseudo_samples)]) # create quantiles
+        quantilized_features = np.quantile(X, quantiles, axis=0) # calculate quantiles of each feature
+        
+        # Calculate the median of all features
+        median_features = np.median(X, axis=0)
+
+        # Loop through each feature
+        for i in range(n_features):
+
+            # Create a copy of the data
+            X_pseudo = np.array([median_features.copy() for i in range(self.n_pseudo_samples)])
+            
+            # convert specific feature to quantilized value
+            X_pseudo[:,i] = quantilized_features[:,i]
+            
+            # Append the pseudo sample to the list
+            pseudo_samples.append(X_pseudo)
+        
+        # Convert the list to a numpy array
+        pseudo_samples = np.array(pseudo_samples)
+        
+        self.pseudo_samples_ = pseudo_samples
+        return self.pseudo_samples_
+    
+    def iteratly_fit_remain_feature(self, pseudo_samples, X, y):
+        iteratly_remain_feature_idx = self.remain_feature_idx.copy()    
+
+        # fit the model on the remaining features
+        self.fitted_estimator.fit(X[:, iteratly_remain_feature_idx], y)
+        print('iteratly_remain_feature_idx:',iteratly_remain_feature_idx)
+
+        # Calculate the feature importance of the pseudo samples
+        MAD = np.zeros(len(self.remain_feature_idx))
+        for idx, feature_idx in enumerate(self.remain_feature_idx):
+            # Access the decision values of the pseudo samples
+            print(pseudo_samples.shape)
+            tmp = pseudo_samples[feature_idx, :, :]
+            D = self.fitted_estimator.decision_function(tmp[:, iteratly_remain_feature_idx])
+            print(tmp[:, iteratly_remain_feature_idx].shape)
+            
+            # Calculate the median absolute deviation (MAD)
+            MAD[idx] = np.median(np.absolute(D - np.median(D)))*self.c
+        
+        # Sort the feature importance
+        print('MAD:',MAD)
+        discard_idx = np.argmin(MAD)
+        print('discard_idx:',discard_idx)
+        self.discarded_features_idx.append(self.remain_feature_idx[discard_idx]) 
+        self.remain_feature_idx.pop(discard_idx) # Remove the worst feature from the remain_feature_idx
+    
+        
+    def fit(self, X, y):
+        self.remain_feature_idx = list(range(X.shape[1]))
+        
+        # Create pseudo samples
+        pseudo_samples = self.create_pseudo_samples(X)
+
+        # Loop through each iteration
+        for i in range(X.shape[1] - self.n_features_to_select):
+            # Fit the model on the remaining features
+            self.iteratly_fit_remain_feature(pseudo_samples, X, y)
+        
+        self.ranked_features_ascending_ = self.discarded_features_idx.copy()
+        self.ranked_features_ascending_ += self.remain_feature_idx
+        self.ranked_features_ascending_ = self.ranked_features_ascending_[::-1]
+
+class RFE_pseudo_sample():
+    def __init__(self, n_pseudo_samples, fitted_estimator, n_features_to_select=0,  c=1.4826):
+        self.n_features_to_select = n_features_to_select
+        self.fitted_estimator = fitted_estimator
+        self.params = fitted_estimator.best_estimator_.get_params()
+        self.n_pseudo_samples = n_pseudo_samples
+        self.discarded_features_idx = list()
+        self.remain_feature_idx = list()
+        self.c = c
+
+    def create_pseudo_samples(self, X):
+        n_features = X.shape[1]
+        
+        # Create a list to store the pseudo samples
+        pseudo_samples = []
+        
+        # Calculate the quantiles of all features
+        quantiles = np.array([i/self.n_pseudo_samples for i in range(self.n_pseudo_samples)]) # create quantiles
+        quantilized_features = np.quantile(X, quantiles, axis=0) # calculate quantiles of each feature
+        
+        # Calculate the median of all features
+        median_features = np.median(X, axis=0)
+
+        # Loop through each feature
+        for i in range(n_features):
+
+            # Create a copy of the data
+            X_pseudo = np.array([median_features.copy() for i in range(self.n_pseudo_samples)])
+            
+            # convert specific feature to quantilized value
+            X_pseudo[:,i] = quantilized_features[:,i]
+            
+            # Append the pseudo sample to the list
+            pseudo_samples.append(X_pseudo)
+        
+        # Convert the list to a numpy array
+        pseudo_samples = np.array(pseudo_samples)
+        
+        self.pseudo_samples_ = pseudo_samples
+        return self.pseudo_samples_
+    
+    def iteratly_fit_remain_feature(self, pseudo_samples, X, y):
+        iteratly_remain_feature_idx = self.remain_feature_idx.copy()    
+
+        # fit the model on the remaining features
+        estimator = self.fitted_estimator.best_estimator_
+
+        estimator.fit(X[:, iteratly_remain_feature_idx], y)
+        # print('iteratly_remain_feature_idx:',iteratly_remain_feature_idx)
+
+        # Calculate the feature importance of the pseudo samples
+        MAD = np.zeros(len(self.remain_feature_idx))
+        for idx, feature_idx in enumerate(self.remain_feature_idx):
+            # Access the decision values of the pseudo samples
+            # print(pseudo_samples.shape)
+            tmp = pseudo_samples[feature_idx, :, :]
+            D = estimator.decision_function(tmp[:, iteratly_remain_feature_idx])
+            # print(tmp[:, iteratly_remain_feature_idx].shape)
+            
+            # Calculate the median absolute deviation (MAD)
+            MAD[idx] = np.median(np.absolute(D - np.median(D)))*self.c
+        
+        # Sort the feature importance
+        print('MAD:',MAD)
+        discard_idx = np.argmin(MAD)
+        print('discard_idx:',discard_idx)
+        self.discarded_features_idx.append(self.remain_feature_idx[discard_idx]) 
+        self.remain_feature_idx.pop(discard_idx) # Remove the worst feature from the remain_feature_idx
+    
+        
+    def fit(self, X, y):
+        self.remain_feature_idx = list(range(X.shape[1]))
+        
+        # Create pseudo samples
+        pseudo_samples = self.create_pseudo_samples(X)
+
+        # Loop through each iteration
+        for i in range(X.shape[1] - self.n_features_to_select):
+            # Fit the model on the remaining features
+            self.iteratly_fit_remain_feature(pseudo_samples, X, y)
+        
+        self.ranked_features_ascending_ = self.discarded_features_idx.copy()
+        self.ranked_features_ascending_ += self.remain_feature_idx
+        self.ranked_features_ascending_ = self.ranked_features_ascending_[::-1]
