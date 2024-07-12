@@ -1,6 +1,7 @@
 import numpy as np
 import copy
 from scipy.signal import decimate, butter, lfilter
+from scipy.stats import zscore
 
 class Data_Preprocess_EEGNet:
     def __init__(self, data, info, **kwargs):
@@ -16,6 +17,10 @@ class Data_Preprocess_EEGNet:
         self.target_Freq = 125 # downsample to "target_freq" Hz
         self.conduct_filter = True  # Whether to band-pass filter
         self.conduct_decimate = True  # Whether to downsample
+        self.conduct_Czrrf = False # Whether to conduct CZ re-reference
+        self.Cz_sequence = 21 # sequence (position) of Cz electrode
+        self.at_each_time_point = True
+        self.across_channel = False
         for k in kwargs.keys():
             self.__setattr__(k, kwargs[k])
             
@@ -36,6 +41,10 @@ class Data_Preprocess_EEGNet:
             
         def epochs(signal, sec_Window, sec_Overlap):
             q = 1
+            # Cz re-reference
+            if self.conduct_Czrrf: 
+                signal = signal - signal[self.Cz_sequence, :]
+                signal = np.delete(signal, self.Cz_sequence, axis=0)
             # band-pass filter
             if self.conduct_filter: signal = butter_bandpass_filter(signal, self.band[0], self.band[1], self.Fs, order=5)
             # downsample
@@ -98,7 +107,7 @@ class Data_Preprocess_EEGNet:
         
         return data_ndarrays, label_ndarrays, label_ndarrays_CInonCI
 
-    def epoch_based_organizing(self, z_score=False):
+    def epoch_based_organizing(self, z_score=False, minmax=False):
         [data_ndarrays, label_ndarrays, label_ndarrays_CInonCI] = self.data_preprocessing(self.data, self.info, self.sec_Window, self.sec_Overlap)
         
         # In python, assigning a dict() to variable is just creating a "reference".
@@ -116,6 +125,10 @@ class Data_Preprocess_EEGNet:
                 print(f'z-score normalization of {key}')
                 data_ndarrays[key] = self.scaling(data_ndarrays[key])
                 print(f'{key}: (subject*epoch,1,channel,datapoint):',data_ndarrays[key].shape)
+            elif minmax==True:
+                print(f'minmax normalization of {key}')
+                data_ndarrays[key] = self.scaling_minmax(data_ndarrays[key])
+                print(f'{key}: (subject*epoch,1,channel,datapoint):',data_ndarrays[key].shape)
             else:   pass
 
             # Repeate the label based on the nEpoch, i.e. [1,0,1] with nEpoch=3 -> [1,1,1,0,0,0,1,1,1] 
@@ -127,11 +140,77 @@ class Data_Preprocess_EEGNet:
         self.label_ndarrays_CInonCI_E = label_ndarrays_CInonCI
         return data_ndarrays, label_ndarrays, label_ndarrays_CInonCI
 
-    def scaling(datx):
-        ndatx = []
-        for dx in datx:
-            mean, std = np.average(dx, axis=1), np.std(dx, axis=1)
-            ndatx.append((dx-mean)/std)
-        return np.array(ndatx)
 
+    '''
+    def scaling(self, datx):
+        from sklearn.preprocessing import scale
+        # datx: (subject*epoch,1,channel,datapoint)
+        ndatx = []
+        # z-score normalization across channels at each time point
+        if self.at_each_time_point == True:
+            for dx in datx:
+                # dx:(1,channel,datapoint)
+                mean, std = np.average(dx, axis=1), np.std(dx, axis=1)
+                ndatx.append((dx-mean)/std)
+        # z-score normalization on each epoch (1,3,500) -> (1500,) then z-score -> reshape back to (1,3,500)
+        elif self.at_each_time_point == False:
+            for dx in datx:
+                ndatx.append(zscore(dx.flatten()).reshape(dx.shape))
+        return np.array(ndatx)
+    '''
+    def scaling(self, datx):
+        from sklearn.preprocessing import scale
+        # datx: (subject*epoch,1,channel,datapoint)
+        ndatx = []
+        # minmax normalization across channels at each time point
+        # timepoint-based across channel z_score: TACZS
+        if self.at_each_time_point == True:
+            for dx in datx:
+                # dx:(1,channel,datapoint)
+                # dxx:(channel, datapoint)
+                dxx = dx[0,:,:]
+                ndatx.append( scale(dxx, axis=0).reshape(dx.shape) )
+            
+        # minmax normalization on each epoch (1,3,500) -> (1500,) then z-score -> reshape back to (1,3,500)
+        elif self.at_each_time_point == False:
+            # epoch-based across channel z_score: EACZS
+            if self.across_channel == True:
+                for dx in datx:
+                    ndatx.append( scale(dx.flatten()).reshape(dx.shape) )
+            # epoch-based single channel minmax: ESCZS
+            elif self.across_channel == False:
+                for dx in datx:
+                    # dx:(1,channel,datapoint)
+                    # dxx:(channel, datapoint)
+                    dxx = dx[0,:,:]
+                    ndatx.append( scale(dxx, axis=1).reshape(dx.shape) )
+        return np.array(ndatx)
+    
+    def scaling_minmax(self, datx):
+        from sklearn.preprocessing import minmax_scale
+        # datx: (subject*epoch,1,channel,datapoint)
+        ndatx = []
+        # minmax normalization across channels at each time point
+        # timepoint-based across channel minmax: TACMM
+        if self.at_each_time_point == True:
+            for dx in datx:
+                # dx:(1,channel,datapoint)
+                # dxx:(channel, datapoint)
+                dxx = dx[0,:,:]
+                ndatx.append( minmax_scale(dxx, axis=0).reshape(dx.shape) )
+            
+        # minmax normalization on each epoch (1,3,500) -> (1500,) then z-score -> reshape back to (1,3,500)
+        elif self.at_each_time_point == False:
+            # epoch-based across channel minmax: EACMM
+            if self.across_channel == True:
+                for dx in datx:
+                    ndatx.append( minmax_scale(dx.flatten()).reshape(dx.shape) )
+            # epoch-based single channel minmax: ESCMM
+            elif self.across_channel == False:
+                for dx in datx:
+                    # dx:(1,channel,datapoint)
+                    # dxx:(channel, datapoint)
+                    dxx = dx[0,:,:]
+                    ndatx.append( minmax_scale(dxx, axis=1).reshape(dx.shape) )
+        return np.array(ndatx)
     
