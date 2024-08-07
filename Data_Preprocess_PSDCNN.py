@@ -10,9 +10,9 @@ class Data_Preprocess_PSDCNN:
         # use **kwargs to set the new value of below args.
         self.sec_Window = 5
         self.sec_Overlap = 0
-        self.Fs = 250
+        self.Fs = 500
         self.band = [2,32] # band pass to "band" Hz
-        self.target_Freq = 125 # downsample to "target_freq" Hz
+        self.target_Freq = 250 # downsample to "target_freq" Hz
         self.conduct_filter = True  # Whether to band-pass filter
         self.conduct_decimate = True  # Whether to downsample
         self.conduct_Czrrf = False # Whether to conduct CZ re-reference
@@ -114,7 +114,7 @@ class Data_Preprocess_PSDCNN:
 
             # access the specific frequency band of PSD
             fftfreq = np.fft.fftfreq(nDatapoint, d=1/self.target_Freq)
-            mask = fftfreq >= self.band[0] & fftfreq <= self.band[1]
+            mask = (fftfreq >= self.band[0]) & (fftfreq <= self.band[1])
             data_ndarrays_PSD[key] = data_ndarrays_PSD[key][:,:,:,mask]
 
             # map into intensity value range [0,1], 0: min, 1: max

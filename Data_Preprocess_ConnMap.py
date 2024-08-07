@@ -1,9 +1,9 @@
 import numpy as np
 import copy
 from scipy.signal import decimate, butter, lfilter
-from conn_utils import coh_connectivity, pli_connectivity
+from conn_utils import coh_connectivity, pli_connectivity, coh_connectivity_multiBands
 
-class Data_Preprocess_PSDCNN:
+class Data_Preprocess_ConnMap:
     def __init__(self, data, info, **kwargs):
         self.data = data
         self.info = info
@@ -104,18 +104,31 @@ class Data_Preprocess_PSDCNN:
         
         return data_ndarrays, label_ndarrays, label_ndarrays_CInonCI
 
+    # def PSD_image(self, data_ndarrays):
+    #     # data_ndarrays.shape: (subject*epoch,1,channel,datapoint)
+    #     # Output: (subject*epoch,1,channel,datapoint)
+    #     data_ndarrays_PSD = copy.deepcopy(data_ndarrays)
+    #     for key, value in data_ndarrays.items():
+    #         # conn calculation
+    #         [nSubjectxEpoch, one, nChannel, nDatapoint] = value.shape
+    #         for sub in range(nSubjectxEpoch):
+
+    #     return data_ndarrays_PSD
+
     def conn_map(self, data_ndarrays):
         # data_ndarrays.shape: (subject*epoch,1,channel,datapoint)
         # Output: (subject*epoch,1,channel,datapoint)
-        data_ndarrays_connMap = copy.deepcopy(data_ndarrays)
+        bands = [[2,4],[4,8],[8,12],[12,30],[30,45]]
+        data_ndarrays_conn_map = {}
         for key, value in data_ndarrays.items():
             # conn calculation
-            [nSubjectxEpoch, one, nChannel, nDatapoint] = value.shape
-            for sub in range(nSubjectxEpoch):
-                abandon, data_ndarrays_connMap[sub,0,:,:] = coh_connectivity(nChannel, value[sub,0,:,:], 2, 50, 500)
-
-        return data_ndarrays_connMap
-
+            [nSubject_x_Epoch, one, nChannel, nDatapoint] = value.shape
+            data_ndarrays_conn_map[key] = np.zeros([nSubject_x_Epoch, len(bands), nChannel, nChannel], dtype=float)
+            for epoch in range(nSubject_x_Epoch):
+                data_ndarrays_conn_map[key][epoch,:,:,:] = coh_connectivity_multiBands(nChannel, value[epoch,0,:,:], bands, self.target_Freq)
+                print(f'{key}, epoch:{epoch}')
+            print(data_ndarrays_conn_map[key].shape)
+        return data_ndarrays_conn_map
 
     def epoch_based_organizing(self, z_score=False):
         [data_ndarrays, label_ndarrays, label_ndarrays_CInonCI] = self.data_preprocessing(self.data, self.info, self.sec_Window, self.sec_Overlap)
@@ -143,7 +156,7 @@ class Data_Preprocess_PSDCNN:
             print(f'epoch based labels of {key}:',label_ndarrays[key].shape)
 
         # PSD image conversion
-        data_ndarrays = self.PSD_image(data_ndarrays)
+        data_ndarrays = self.conn_map(data_ndarrays)
         
         self.data_ndarrays_E = data_ndarrays
         self.label_ndarrays_CInonCI_E = label_ndarrays_CInonCI
